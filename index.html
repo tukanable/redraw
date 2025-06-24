@@ -111,7 +111,12 @@
     <div id="ui">
         <div id="accuracy">Точность: 0%</div>
         <div id="attempts">Попытка: 1</div>
+        <div id="successRate">Успех за 10: 0%</div>
         <div id="lastResults">Последние 10: -</div>
+        <div id="settings">
+            <label for="thresholdInput">Авто-смена при %:</label>
+            <input type="number" id="thresholdInput" min="50" max="99" value="98" onchange="saveThreshold()">
+        </div>
         <canvas id="graph"></canvas>
         <button onclick="generateNewLine()">Новая линия</button>
         <button onclick="clearAttempts()">Очистить попытки</button>
@@ -142,6 +147,7 @@
         let currentAccuracy = 0;
         let attemptHistory = [];
         let currentAttempt = 1;
+        let autoChangeThreshold = 98;
         
         // Graph canvas
         const graphCanvas = document.getElementById('graph');
@@ -151,7 +157,7 @@
         
         // Drawing settings
         ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 4;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         
@@ -232,29 +238,17 @@
             }
             
             // Draw all user strokes
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 4;
             
             for (let stroke of userStrokes) {
                 if (stroke.length > 1) {
-                    ctx.beginPath();
-                    ctx.moveTo(stroke[0].x, stroke[0].y);
-                    for (let i = 1; i < stroke.length; i++) {
-                        ctx.lineTo(stroke[i].x, stroke[i].y);
-                    }
-                    ctx.stroke();
+                    drawColoredStroke(stroke);
                 }
             }
             
-            // Draw current stroke
+            // Draw current stroke with color based on distance from target
             if (currentStroke.length > 1) {
-                ctx.strokeStyle = '#0066cc';
-                ctx.beginPath();
-                ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-                for (let i = 1; i < currentStroke.length; i++) {
-                    ctx.lineTo(currentStroke[i].x, currentStroke[i].y);
-                }
-                ctx.stroke();
+                drawColoredStroke(currentStroke);
             }
         }
         
@@ -322,8 +316,8 @@
                 updateLastResultsDisplay();
                 updateGraph();
                 
-                // Check if accuracy is above 98% - auto generate new line
-                if (currentAccuracy >= 98) {
+                // Check if accuracy is above threshold - auto generate new line
+                if (currentAccuracy >= autoChangeThreshold) {
                     setTimeout(() => {
                         generateNewLine();
                     }, 1000); // Delay to show the result
@@ -407,11 +401,64 @@
             const last10 = attemptHistory.slice(-10);
             if (last10.length === 0) {
                 document.getElementById('lastResults').textContent = 'Последние 10: -';
+                document.getElementById('successRate').textContent = 'Успех за 10: 0%';
                 return;
             }
             
             const resultsText = last10.map(acc => Math.round(acc) + '%').join(', ');
             document.getElementById('lastResults').textContent = `Последние ${last10.length}: ${resultsText}`;
+            
+            // Calculate average success rate
+            const averageAccuracy = last10.reduce((sum, acc) => sum + acc, 0) / last10.length;
+            const successRate = Math.round(averageAccuracy);
+            document.getElementById('successRate').textContent = `Успех за 10: ${successRate}%`;
+        }
+        
+        function getDistanceColor(distance) {
+            // Color based on distance from target line
+            // Green when close (0-5px), yellow (5-15px), red (15px+)
+            if (distance < 5) {
+                // Very close - bright green
+                return 'rgb(0, 255, 0)';
+            } else if (distance < 15) {
+                // Medium distance - yellow to orange
+                const progress = (distance - 5) / 10;
+                const red = Math.round(255);
+                const green = Math.round(255 * (1 - progress * 0.5));
+                return `rgb(${red}, ${green}, 0)`;
+            } else {
+                // Far - red
+                return 'rgb(255, 0, 0)';
+            }
+        }
+        
+        function drawColoredStroke(stroke) {
+            if (stroke.length < 2) return;
+            
+            // Draw each segment with color based on distance to target
+            for (let i = 1; i < stroke.length; i++) {
+                const point = stroke[i];
+                const prevPoint = stroke[i - 1];
+                
+                // Find minimum distance to target line for this point
+                let minDistance = Infinity;
+                for (let targetPoint of targetLine) {
+                    const distance = Math.sqrt(
+                        Math.pow(point.x - targetPoint.x, 2) + 
+                        Math.pow(point.y - targetPoint.y, 2)
+                    );
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                    }
+                }
+                
+                // Draw segment with appropriate color
+                ctx.strokeStyle = getDistanceColor(minDistance);
+                ctx.beginPath();
+                ctx.moveTo(prevPoint.x, prevPoint.y);
+                ctx.lineTo(point.x, point.y);
+                ctx.stroke();
+            }
         }
         
         function updateGraph() {
@@ -477,7 +524,22 @@
             redrawCanvas();
         }
         
-        // Initialize with first line
+        function saveThreshold() {
+            const input = document.getElementById('thresholdInput');
+            autoChangeThreshold = parseInt(input.value);
+            localStorage.setItem('autoChangeThreshold', autoChangeThreshold);
+        }
+        
+        function loadThreshold() {
+            const saved = localStorage.getItem('autoChangeThreshold');
+            if (saved) {
+                autoChangeThreshold = parseInt(saved);
+                document.getElementById('thresholdInput').value = autoChangeThreshold;
+            }
+        }
+        
+        // Initialize
+        loadThreshold();
         generateNewLine();
     </script>
 </body>
