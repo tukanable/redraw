@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Drawing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        
+        #canvas {
+            display: block;
+            cursor: crosshair;
+            background: white;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            min-width: 250px;
+        }
+        
+        #accuracy {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        #attempts {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        #lastResults {
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+        
+        #successRate {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        #settings {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        #settings label {
+            font-size: 12px;
+            color: #666;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        #thresholdInput {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        #graph {
+            width: 200px;
+            height: 100px;
+            border: 1px solid #ddd;
+            margin: 10px 0;
+            background: white;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="ui">
+        <div id="accuracy">Точность: 0%</div>
+        <div id="attempts">Попытка: 1</div>
+        <div id="lastResults">Последние 10: -</div>
+        <canvas id="graph"></canvas>
+        <button onclick="generateNewLine()">Новая линия</button>
+        <button onclick="clearAttempts()">Очистить попытки</button>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size to full window
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Drawing state
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        
+        // Line trainer system
+        let targetLine = [];
+        let userStrokes = []; // Array of strokes, each stroke is an array of points
+        let currentStroke = [];
+        let currentAccuracy = 0;
+        let attemptHistory = [];
+        let currentAttempt = 1;
+        
+        // Graph canvas
+        const graphCanvas = document.getElementById('graph');
+        const graphCtx = graphCanvas.getContext('2d');
+        graphCanvas.width = 200;
+        graphCanvas.height = 100;
+        
+        // Drawing settings
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        function startDrawing(e) {
+            isDrawing = true;
+            const [x, y] = getEventPos(e);
+            [lastX, lastY] = [x, y];
+            
+            // Start new stroke
+            currentStroke = [{ x, y }];
+        }
+        
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const [currentX, currentY] = getEventPos(e);
+            
+            // Add point to current stroke
+            currentStroke.push({ x: currentX, y: currentY });
+            
+            // Redraw everything
+            redrawCanvas();
+            
+            // Calculate accuracy
+            calculateAccuracy();
+            
+            [lastX, lastY] = [currentX, currentY];
+        }
+        
+        function generateNewLine() {
+            // Clear previous drawings
+            userStrokes = [];
+            currentStroke = [];
+            targetLine = [];
+            attemptHistory = [];
+            currentAttempt = 1;
+            
+            // Generate random straight line
+            const startX = Math.random() * canvas.width * 0.4 + canvas.width * 0.1;
+            const startY = Math.random() * canvas.height * 0.6 + canvas.height * 0.2;
+            const endX = Math.random() * canvas.width * 0.4 + canvas.width * 0.5;
+            const endY = Math.random() * canvas.height * 0.6 + canvas.height * 0.2;
+            
+            // Generate points along the straight line
+            const distance = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
+            const steps = Math.ceil(distance / 2); // Point every 2 pixels
+            
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const x = startX + (endX - startX) * t;
+                const y = startY + (endY - startY) * t;
+                targetLine.push({ x, y });
+            }
+            
+            currentAccuracy = 0;
+            updateAccuracyDisplay();
+            updateAttemptsDisplay();
+            updateLastResultsDisplay();
+            clearGraph();
+            redrawCanvas();
+        }
+        
+        function redrawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw target line (gray, dashed)
+            if (targetLine.length > 1) {
+                ctx.strokeStyle = '#888888';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([10, 5]);
+                ctx.beginPath();
+                ctx.moveTo(targetLine[0].x, targetLine[0].y);
+                for (let i = 1; i < targetLine.length; i++) {
+                    ctx.lineTo(targetLine[i].x, targetLine[i].y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Draw all user strokes
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            
+            for (let stroke of userStrokes) {
+                if (stroke.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(stroke[0].x, stroke[0].y);
+                    for (let i = 1; i < stroke.length; i++) {
+                        ctx.lineTo(stroke[i].x, stroke[i].y);
+                    }
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw current stroke
+            if (currentStroke.length > 1) {
+                ctx.strokeStyle = '#0066cc';
+                ctx.beginPath();
+                ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
+                for (let i = 1; i < currentStroke.length; i++) {
+                    ctx.lineTo(currentStroke[i].x, currentStroke[i].y);
+                }
+                ctx.stroke();
+            }
+        }
+        
+        function calculateAccuracy() {
+            // Combine all user strokes and current stroke
+            let allUserPoints = [];
+            for (let stroke of userStrokes) {
+                allUserPoints = allUserPoints.concat(stroke);
+            }
+            allUserPoints = allUserPoints.concat(currentStroke);
+            
+            if (allUserPoints.length === 0 || targetLine.length === 0) {
+                currentAccuracy = 0;
+                updateAccuracyDisplay();
+                return;
+            }
+            
+            let totalDistance = 0;
+            let validPoints = 0;
+            
+            // For each user point, find closest target point
+            for (let userPoint of allUserPoints) {
+                let minDistance = Infinity;
+                
+                for (let targetPoint of targetLine) {
+                    const distance = Math.sqrt(
+                        Math.pow(userPoint.x - targetPoint.x, 2) + 
+                        Math.pow(userPoint.y - targetPoint.y, 2)
+                    );
+                    
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                    }
+                }
+                
+                if (minDistance < 30) { // Only count points within 30px
+                    totalDistance += minDistance;
+                    validPoints++;
+                }
+            }
+            
+            if (validPoints > 0) {
+                const averageDistance = totalDistance / validPoints;
+                currentAccuracy = Math.max(0, Math.min(100, 100 - (averageDistance * 3)));
+            } else {
+                currentAccuracy = 0;
+            }
+            
+            updateAccuracyDisplay();
+        }
+        
+        function updateAccuracyDisplay() {
+            document.getElementById('accuracy').textContent = `Точность: ${Math.round(currentAccuracy)}%`;
+        }
+        
+        function stopDrawing() {
+            if (isDrawing && currentStroke.length > 0) {
+                // Calculate final accuracy for this attempt
+                calculateAccuracy();
+                
+                // Record this attempt
+                attemptHistory.push(currentAccuracy);
+                currentAttempt++;
+                updateAttemptsDisplay();
+                updateLastResultsDisplay();
+                updateGraph();
+                
+                // Check if accuracy is above 98% - auto generate new line
+                if (currentAccuracy >= 98) {
+                    setTimeout(() => {
+                        generateNewLine();
+                    }, 1000); // Delay to show the result
+                }
+                
+                // Clear all strokes after recording the result
+                userStrokes = [];
+                currentStroke = [];
+                
+                // Redraw canvas with only target line
+                redrawCanvas();
+            }
+            isDrawing = false;
+        }
+        
+        function getEventPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            return [
+                e.clientX - rect.left,
+                e.clientY - rect.top
+            ];
+        }
+        
+        // Mouse events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        
+        // Touch events for tablet support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        // Prevent scrolling when touching the canvas
+        document.body.addEventListener('touchstart', (e) => {
+            if (e.target === canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        document.body.addEventListener('touchend', (e) => {
+            if (e.target === canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        document.body.addEventListener('touchmove', (e) => {
+            if (e.target === canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        function updateAttemptsDisplay() {
+            document.getElementById('attempts').textContent = `Попытка: ${currentAttempt}`;
+        }
+        
+        function updateLastResultsDisplay() {
+            const last10 = attemptHistory.slice(-10);
+            if (last10.length === 0) {
+                document.getElementById('lastResults').textContent = 'Последние 10: -';
+                return;
+            }
+            
+            const resultsText = last10.map(acc => Math.round(acc) + '%').join(', ');
+            document.getElementById('lastResults').textContent = `Последние ${last10.length}: ${resultsText}`;
+        }
+        
+        function updateGraph() {
+            if (attemptHistory.length === 0) return;
+            
+            graphCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+            
+            // Draw grid
+            graphCtx.strokeStyle = '#e0e0e0';
+            graphCtx.lineWidth = 1;
+            for (let i = 0; i <= 5; i++) {
+                const y = (i / 5) * graphCanvas.height;
+                graphCtx.beginPath();
+                graphCtx.moveTo(0, y);
+                graphCtx.lineTo(graphCanvas.width, y);
+                graphCtx.stroke();
+            }
+            
+            // Draw accuracy line
+            if (attemptHistory.length > 1) {
+                graphCtx.strokeStyle = '#007bff';
+                graphCtx.lineWidth = 2;
+                graphCtx.beginPath();
+                
+                for (let i = 0; i < attemptHistory.length; i++) {
+                    const x = (i / (attemptHistory.length - 1)) * graphCanvas.width;
+                    const y = graphCanvas.height - (attemptHistory[i] / 100) * graphCanvas.height;
+                    
+                    if (i === 0) {
+                        graphCtx.moveTo(x, y);
+                    } else {
+                        graphCtx.lineTo(x, y);
+                    }
+                }
+                graphCtx.stroke();
+                
+                // Draw points
+                graphCtx.fillStyle = '#007bff';
+                for (let i = 0; i < attemptHistory.length; i++) {
+                    const x = (i / (attemptHistory.length - 1)) * graphCanvas.width;
+                    const y = graphCanvas.height - (attemptHistory[i] / 100) * graphCanvas.height;
+                    graphCtx.beginPath();
+                    graphCtx.arc(x, y, 3, 0, Math.PI * 2);
+                    graphCtx.fill();
+                }
+            }
+        }
+        
+        function clearGraph() {
+            graphCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+        }
+        
+        function clearAttempts() {
+            userStrokes = [];
+            currentStroke = [];
+            attemptHistory = [];
+            currentAttempt = 1;
+            currentAccuracy = 0;
+            updateAccuracyDisplay();
+            updateAttemptsDisplay();
+            updateLastResultsDisplay();
+            clearGraph();
+            redrawCanvas();
+        }
+        
+        // Initialize with first line
+        generateNewLine();
+    </script>
+</body>
+</html>
