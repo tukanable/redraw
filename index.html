@@ -148,6 +148,7 @@
         let attemptHistory = [];
         let currentAttempt = 1;
         let autoChangeThreshold = 98;
+        let currentMousePos = { x: 0, y: 0 };
         
         // Graph canvas
         const graphCanvas = document.getElementById('graph');
@@ -266,10 +267,33 @@
                 return;
             }
             
+            // Calculate coverage - how much of the target line is covered
+            let coveredTargetPoints = 0;
+            const coverageThreshold = 15; // pixels
+            
+            for (let targetPoint of targetLine) {
+                let isCovered = false;
+                for (let userPoint of allUserPoints) {
+                    const distance = Math.sqrt(
+                        Math.pow(userPoint.x - targetPoint.x, 2) + 
+                        Math.pow(userPoint.y - targetPoint.y, 2)
+                    );
+                    if (distance <= coverageThreshold) {
+                        isCovered = true;
+                        break;
+                    }
+                }
+                if (isCovered) {
+                    coveredTargetPoints++;
+                }
+            }
+            
+            const coverage = coveredTargetPoints / targetLine.length;
+            
+            // Calculate precision - how close user points are to target
             let totalDistance = 0;
             let validPoints = 0;
             
-            // For each user point, find closest target point
             for (let userPoint of allUserPoints) {
                 let minDistance = Infinity;
                 
@@ -290,12 +314,46 @@
                 }
             }
             
+            let precision = 0;
             if (validPoints > 0) {
                 const averageDistance = totalDistance / validPoints;
-                currentAccuracy = Math.max(0, Math.min(100, 100 - (averageDistance * 3)));
-            } else {
-                currentAccuracy = 0;
+                precision = Math.max(0, Math.min(100, 100 - (averageDistance * 3)));
             }
+            
+            // Calculate overdrawn penalty
+            const idealUserPoints = targetLine.length;
+            const overdrawRatio = allUserPoints.length / idealUserPoints;
+            let overdrawPenalty = 1;
+            
+            if (overdrawRatio > 1.2) {
+                // Penalty for drawing too much
+                overdrawPenalty = Math.max(0.5, 1 - (overdrawRatio - 1.2) * 0.5);
+            }
+            
+            // Calculate overlap penalty (drawing multiple times over same area)
+            let overlapPenalty = 1;
+            let overlapCount = 0;
+            
+            for (let i = 0; i < allUserPoints.length; i++) {
+                for (let j = i + 1; j < allUserPoints.length; j++) {
+                    const distance = Math.sqrt(
+                        Math.pow(allUserPoints[i].x - allUserPoints[j].x, 2) + 
+                        Math.pow(allUserPoints[i].y - allUserPoints[j].y, 2)
+                    );
+                    if (distance < 5) { // Very close points indicate overlap
+                        overlapCount++;
+                    }
+                }
+            }
+            
+            if (overlapCount > allUserPoints.length * 0.1) {
+                overlapPenalty = Math.max(0.7, 1 - (overlapCount / allUserPoints.length));
+            }
+            
+            // Final accuracy combines coverage, precision, and penalties
+            currentAccuracy = Math.max(0, Math.min(100, 
+                coverage * precision * overdrawPenalty * overlapPenalty
+            ));
             
             updateAccuracyDisplay();
         }
@@ -316,11 +374,16 @@
                 updateLastResultsDisplay();
                 updateGraph();
                 
-                // Check if accuracy is above threshold - auto generate new line
-                if (currentAccuracy >= autoChangeThreshold) {
-                    setTimeout(() => {
-                        generateNewLine();
-                    }, 1000); // Delay to show the result
+                // Check if average accuracy of last 10 attempts is above threshold
+                if (attemptHistory.length >= 10) {
+                    const last10 = attemptHistory.slice(-10);
+                    const averageAccuracy = last10.reduce((sum, acc) => sum + acc, 0) / last10.length;
+                    
+                    if (averageAccuracy >= autoChangeThreshold) {
+                        setTimeout(() => {
+                            generateNewLine();
+                        }, 1000); // Delay to show the result
+                    }
                 }
                 
                 // Clear all strokes after recording the result
