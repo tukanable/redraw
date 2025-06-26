@@ -75,12 +75,13 @@
             margin-bottom: 5px;
         }
         
-        #thresholdInput {
+        #thresholdInput, #radiusInput {
             width: 60px;
             padding: 5px;
             border: 1px solid #ddd;
             border-radius: 3px;
             font-size: 14px;
+            margin-right: 10px;
         }
         
         #graph {
@@ -116,6 +117,8 @@
         <div id="settings">
             <label for="thresholdInput">Авто-смена при %:</label>
             <input type="number" id="thresholdInput" min="50" max="99" value="98" onchange="saveThreshold()">
+            <label for="radiusInput">Радиус индикатора:</label>
+            <input type="number" id="radiusInput" min="50" max="200" value="100" onchange="saveRadius()">
         </div>
         <canvas id="graph"></canvas>
         <button onclick="generateNewLine()">Новая линия</button>
@@ -149,6 +152,7 @@
         let currentAttempt = 1;
         let autoChangeThreshold = 98;
         let currentMousePos = { x: 0, y: 0 };
+        let indicatorRadius = 100;
         
         // Graph canvas
         const graphCanvas = document.getElementById('graph');
@@ -175,6 +179,7 @@
             if (!isDrawing) return;
             
             const [currentX, currentY] = getEventPos(e);
+            currentMousePos = { x: currentX, y: currentY };
             
             // Add point to current stroke
             currentStroke.push({ x: currentX, y: currentY });
@@ -250,6 +255,11 @@
             // Draw current stroke with color based on distance from target
             if (currentStroke.length > 1) {
                 drawColoredStroke(currentStroke);
+            }
+            
+            // Draw floating accuracy indicator near cursor
+            if (isDrawing && currentMousePos.x > 0 && currentMousePos.y > 0) {
+                drawFloatingAccuracy();
             }
         }
         
@@ -406,7 +416,11 @@
         
         // Mouse events
         canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mousemove', (e) => {
+            const [x, y] = getEventPos(e);
+            currentMousePos = { x, y };
+            draw(e);
+        });
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
         
@@ -524,6 +538,49 @@
             }
         }
         
+        function drawFloatingAccuracy() {
+            const x = currentMousePos.x;
+            const y = currentMousePos.y;
+            
+            // Find minimum distance to target line
+            let minDistance = Infinity;
+            for (let targetPoint of targetLine) {
+                const distance = Math.sqrt(
+                    Math.pow(x - targetPoint.x, 2) + 
+                    Math.pow(y - targetPoint.y, 2)
+                );
+                if (distance < minDistance) {
+                    minDistance = distance;
+                }
+            }
+            
+            // Calculate radius based on distance
+            // Close to line (0-5px) = small radius (10% of base)
+            // Far from line (30px+) = full radius
+            const maxDistance = 30;
+            const normalizedDistance = Math.min(minDistance, maxDistance) / maxDistance;
+            const minRadius = indicatorRadius * 0.1;
+            const actualRadius = minRadius + (indicatorRadius - minRadius) * normalizedDistance;
+            
+            // Draw semi-transparent gray circle
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#888888';
+            ctx.beginPath();
+            ctx.arc(x, y, actualRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw border
+            ctx.globalAlpha = 0.5;
+            ctx.strokeStyle = '#666666';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, actualRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+        
         function updateGraph() {
             if (attemptHistory.length === 0) return;
             
@@ -593,16 +650,28 @@
             localStorage.setItem('autoChangeThreshold', autoChangeThreshold);
         }
         
-        function loadThreshold() {
-            const saved = localStorage.getItem('autoChangeThreshold');
-            if (saved) {
-                autoChangeThreshold = parseInt(saved);
+        function saveRadius() {
+            const input = document.getElementById('radiusInput');
+            indicatorRadius = parseInt(input.value);
+            localStorage.setItem('indicatorRadius', indicatorRadius);
+        }
+        
+        function loadSettings() {
+            const savedThreshold = localStorage.getItem('autoChangeThreshold');
+            if (savedThreshold) {
+                autoChangeThreshold = parseInt(savedThreshold);
                 document.getElementById('thresholdInput').value = autoChangeThreshold;
+            }
+            
+            const savedRadius = localStorage.getItem('indicatorRadius');
+            if (savedRadius) {
+                indicatorRadius = parseInt(savedRadius);
+                document.getElementById('radiusInput').value = indicatorRadius;
             }
         }
         
         // Initialize
-        loadThreshold();
+        loadSettings();
         generateNewLine();
     </script>
 </body>
