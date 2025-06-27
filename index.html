@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Canvas Drawing</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -15,124 +16,143 @@
             overflow: hidden;
             background: #f0f0f0;
             font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            z-index: 100;
         }
         
         #canvas {
             display: block;
             cursor: crosshair;
             background: white;
-        }
-        
-        #ui {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            min-width: 250px;
+            margin-top: 60px;
+            width: 100vw;
+            height: calc(100vh - 60px);
         }
         
         #accuracy {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: bold;
             color: #333;
-            margin-bottom: 10px;
         }
         
         #attempts {
-            font-size: 16px;
+            font-size: 14px;
             color: #666;
-            margin-bottom: 10px;
         }
         
         #lastResults {
-            font-size: 14px;
+            font-size: 12px;
             color: #555;
-            margin-bottom: 10px;
-            line-height: 1.4;
+            flex: 1;
         }
         
         #successRate {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             color: #333;
-            margin-bottom: 10px;
         }
         
         #settings {
-            margin-bottom: 10px;
-            padding: 10px;
-            background: #f9f9f9;
-            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         #settings label {
             font-size: 12px;
             color: #666;
-            display: block;
-            margin-bottom: 5px;
         }
         
-        #thresholdInput, #radiusInput {
-            width: 60px;
-            padding: 5px;
+        #thresholdInput, #radiusInput, #minLengthInput, #maxLengthInput {
+            width: 50px;
+            padding: 3px 5px;
             border: 1px solid #ddd;
             border-radius: 3px;
-            font-size: 14px;
-            margin-right: 10px;
+            font-size: 12px;
+        }
+        
+        #graphContainer {
+            width: 200px;
+            height: 50px;
+            position: relative;
         }
         
         #graph {
-            width: 200px;
-            height: 100px;
-            border: 1px solid #ddd;
-            margin: 10px 0;
-            background: white;
+            width: 100%;
+            height: 100%;
         }
         
         button {
             background: #007bff;
             color: white;
             border: none;
-            padding: 10px 15px;
+            padding: 5px 10px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 12px;
         }
         
         button:hover {
             background: #0056b3;
         }
+        
+        .info-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
     </style>
 </head>
 <body>
-    <canvas id="canvas"></canvas>
     <div id="ui">
-        <div id="accuracy">Точность: 0%</div>
+        <div class="info-group">
+            <div id="accuracy">Точность: 0%</div>
+            <div id="successRate">Успех: 0%</div>
+        </div>
         <div id="attempts">Попытка: 1</div>
-        <div id="successRate">Успех за 10: 0%</div>
+        <div id="graphContainer">
+            <canvas id="graph"></canvas>
+        </div>
         <div id="lastResults">Последние 10: -</div>
         <div id="settings">
-            <label for="thresholdInput">Авто-смена при %:</label>
+            <label>Авто %:</label>
             <input type="number" id="thresholdInput" min="50" max="99" value="98" onchange="saveThreshold()">
-            <label for="radiusInput">Радиус индикатора:</label>
+            <label>Радиус:</label>
             <input type="number" id="radiusInput" min="50" max="200" value="100" onchange="saveRadius()">
+            <label>Длина:</label>
+            <input type="number" id="minLengthInput" min="50" max="500" value="100" onchange="saveLineLength()">
+            <span>-</span>
+            <input type="number" id="maxLengthInput" min="50" max="500" value="300" onchange="saveLineLength()">
         </div>
-        <canvas id="graph"></canvas>
         <button onclick="generateNewLine()">Новая линия</button>
-        <button onclick="clearAttempts()">Очистить попытки</button>
+        <button onclick="clearAttempts()">Очистить</button>
     </div>
+    <canvas id="canvas"></canvas>
     
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         
-        // Set canvas size to full window
+        // Set canvas size to full window minus toolbar
         function resizeCanvas() {
             canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            canvas.height = window.innerHeight - 60; // Account for toolbar height
         }
         
         resizeCanvas();
@@ -153,12 +173,13 @@
         let autoChangeThreshold = 98;
         let currentMousePos = { x: 0, y: 0 };
         let indicatorRadius = 100;
+        let minLineLength = 100;
+        let maxLineLength = 300;
+        let currentRadius = 0;
+        let targetRadius = 0;
         
-        // Graph canvas
-        const graphCanvas = document.getElementById('graph');
-        const graphCtx = graphCanvas.getContext('2d');
-        graphCanvas.width = 200;
-        graphCanvas.height = 100;
+        // Chart.js graph
+        let accuracyChart = null;
         
         // Drawing settings
         ctx.strokeStyle = '#000000';
@@ -201,11 +222,43 @@
             attemptHistory = [];
             currentAttempt = 1;
             
-            // Generate random straight line
-            const startX = Math.random() * canvas.width * 0.4 + canvas.width * 0.1;
-            const startY = Math.random() * canvas.height * 0.6 + canvas.height * 0.2;
-            const endX = Math.random() * canvas.width * 0.4 + canvas.width * 0.5;
-            const endY = Math.random() * canvas.height * 0.6 + canvas.height * 0.2;
+            // Reset radius animation
+            currentRadius = 0;
+            targetRadius = 0;
+            
+            // Generate random straight line with configured length
+            const lineLength = minLineLength + Math.random() * (maxLineLength - minLineLength);
+            const angle = Math.random() * Math.PI * 2; // Random angle
+            
+            // Start position - ensure line fits on canvas with padding
+            const padding = 50;
+            const maxX = canvas.width - padding;
+            const maxY = canvas.height - padding;
+            const minX = padding;
+            const minY = padding;
+            
+            // Generate random start point within safe area
+            let startX, startY, endX, endY;
+            let attempts = 0;
+            
+            do {
+                startX = minX + Math.random() * (maxX - minX);
+                startY = minY + Math.random() * (maxY - minY);
+                endX = startX + Math.cos(angle) * lineLength;
+                endY = startY + Math.sin(angle) * lineLength;
+                
+                // Try new angle if line goes out of bounds
+                if (endX < minX || endX > maxX || endY < minY || endY > maxY) {
+                    angle = Math.random() * Math.PI * 2;
+                }
+                attempts++;
+            } while ((endX < minX || endX > maxX || endY < minY || endY > maxY) && attempts < 50);
+            
+            // Fallback: ensure line stays within bounds
+            if (endX < minX || endX > maxX || endY < minY || endY > maxY) {
+                endX = Math.max(minX, Math.min(maxX, endX));
+                endY = Math.max(minY, Math.min(maxY, endY));
+            }
             
             // Generate points along the straight line
             const distance = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
@@ -554,20 +607,24 @@
                 }
             }
             
-            // Calculate radius based on distance
+            // Calculate target radius based on distance
             // Close to line (0-5px) = small radius (10% of base)
             // Far from line (30px+) = full radius
             const maxDistance = 30;
             const normalizedDistance = Math.min(minDistance, maxDistance) / maxDistance;
             const minRadius = indicatorRadius * 0.1;
-            const actualRadius = minRadius + (indicatorRadius - minRadius) * normalizedDistance;
+            targetRadius = minRadius + (indicatorRadius - minRadius) * normalizedDistance;
+            
+            // Smooth interpolation (lerp) with time factor
+            const lerpSpeed = 0.15; // Adjust for faster/slower animation
+            currentRadius = currentRadius + (targetRadius - currentRadius) * lerpSpeed;
             
             // Draw semi-transparent gray circle
             ctx.save();
             ctx.globalAlpha = 0.3;
             ctx.fillStyle = '#888888';
             ctx.beginPath();
-            ctx.arc(x, y, actualRadius, 0, Math.PI * 2);
+            ctx.arc(x, y, currentRadius, 0, Math.PI * 2);
             ctx.fill();
             
             // Draw border
@@ -575,60 +632,79 @@
             ctx.strokeStyle = '#666666';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(x, y, actualRadius, 0, Math.PI * 2);
+            ctx.arc(x, y, currentRadius, 0, Math.PI * 2);
             ctx.stroke();
             
             ctx.restore();
         }
         
-        function updateGraph() {
-            if (attemptHistory.length === 0) return;
-            
-            graphCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
-            
-            // Draw grid
-            graphCtx.strokeStyle = '#e0e0e0';
-            graphCtx.lineWidth = 1;
-            for (let i = 0; i <= 5; i++) {
-                const y = (i / 5) * graphCanvas.height;
-                graphCtx.beginPath();
-                graphCtx.moveTo(0, y);
-                graphCtx.lineTo(graphCanvas.width, y);
-                graphCtx.stroke();
-            }
-            
-            // Draw accuracy line
-            if (attemptHistory.length > 1) {
-                graphCtx.strokeStyle = '#007bff';
-                graphCtx.lineWidth = 2;
-                graphCtx.beginPath();
-                
-                for (let i = 0; i < attemptHistory.length; i++) {
-                    const x = (i / (attemptHistory.length - 1)) * graphCanvas.width;
-                    const y = graphCanvas.height - (attemptHistory[i] / 100) * graphCanvas.height;
-                    
-                    if (i === 0) {
-                        graphCtx.moveTo(x, y);
-                    } else {
-                        graphCtx.lineTo(x, y);
+        function initChart() {
+            const ctx = document.getElementById('graph').getContext('2d');
+            accuracyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Точность',
+                        data: [],
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointBackgroundColor: '#007bff',
+                        tension: 0.2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            enabled: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: false
+                        },
+                        y: {
+                            display: true,
+                            min: 0,
+                            max: 100,
+                            ticks: {
+                                display: false
+                            },
+                            grid: {
+                                display: true,
+                                color: 'rgba(0,0,0,0.1)'
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
                     }
                 }
-                graphCtx.stroke();
-                
-                // Draw points
-                graphCtx.fillStyle = '#007bff';
-                for (let i = 0; i < attemptHistory.length; i++) {
-                    const x = (i / (attemptHistory.length - 1)) * graphCanvas.width;
-                    const y = graphCanvas.height - (attemptHistory[i] / 100) * graphCanvas.height;
-                    graphCtx.beginPath();
-                    graphCtx.arc(x, y, 3, 0, Math.PI * 2);
-                    graphCtx.fill();
-                }
-            }
+            });
+        }
+        
+        function updateGraph() {
+            if (!accuracyChart) return;
+            
+            const last10 = attemptHistory.slice(-10);
+            accuracyChart.data.labels = last10.map((_, i) => i + 1);
+            accuracyChart.data.datasets[0].data = last10;
+            accuracyChart.update('none');
         }
         
         function clearGraph() {
-            graphCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+            if (!accuracyChart) return;
+            accuracyChart.data.labels = [];
+            accuracyChart.data.datasets[0].data = [];
+            accuracyChart.update('none');
         }
         
         function clearAttempts() {
@@ -656,6 +732,22 @@
             localStorage.setItem('indicatorRadius', indicatorRadius);
         }
         
+        function saveLineLength() {
+            const minInput = document.getElementById('minLengthInput');
+            const maxInput = document.getElementById('maxLengthInput');
+            minLineLength = parseInt(minInput.value);
+            maxLineLength = parseInt(maxInput.value);
+            
+            // Ensure min is not greater than max
+            if (minLineLength > maxLineLength) {
+                minLineLength = maxLineLength;
+                minInput.value = minLineLength;
+            }
+            
+            localStorage.setItem('minLineLength', minLineLength);
+            localStorage.setItem('maxLineLength', maxLineLength);
+        }
+        
         function loadSettings() {
             const savedThreshold = localStorage.getItem('autoChangeThreshold');
             if (savedThreshold) {
@@ -668,10 +760,23 @@
                 indicatorRadius = parseInt(savedRadius);
                 document.getElementById('radiusInput').value = indicatorRadius;
             }
+            
+            const savedMinLength = localStorage.getItem('minLineLength');
+            if (savedMinLength) {
+                minLineLength = parseInt(savedMinLength);
+                document.getElementById('minLengthInput').value = minLineLength;
+            }
+            
+            const savedMaxLength = localStorage.getItem('maxLineLength');
+            if (savedMaxLength) {
+                maxLineLength = parseInt(savedMaxLength);
+                document.getElementById('maxLengthInput').value = maxLineLength;
+            }
         }
         
         // Initialize
         loadSettings();
+        initChart();
         generateNewLine();
     </script>
 </body>
