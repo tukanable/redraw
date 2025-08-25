@@ -79,7 +79,7 @@
             color: #666;
         }
         
-        #thresholdInput, #radiusInput, #minLengthInput, #maxLengthInput, #modeSelect {
+        #thresholdInput, #radiusInput, #minLengthInput, #maxLengthInput, #modeSelect, #maxAttemptsInput {
             width: 50px;
             padding: 3px 5px;
             border: 1px solid #ddd;
@@ -89,6 +89,10 @@
         
         #modeSelect {
             width: 120px;
+        }
+        
+        #focusToggle {
+            margin-left: 5px;
         }
         
         #graphContainer {
@@ -128,6 +132,7 @@
         <div class="info-group">
             <div id="accuracy">Точность: 0%</div>
             <div id="successRate">Успех: 0%</div>
+            <div id="speed">Скорость: 0 px/s</div>
         </div>
         <div id="attempts">Попытка: 1</div>
         <div id="graphContainer">
@@ -139,11 +144,18 @@
             <select id="modeSelect" onchange="saveMode()">
                 <option value="line">Линия</option>
                 <option value="points">Точки</option>
+                <option value="circle">Круг</option>
             </select>
             <label>Авто %:</label>
             <input type="number" id="thresholdInput" min="50" max="99" value="98" onchange="saveThreshold()">
             <label>Радиус:</label>
             <input type="number" id="radiusInput" min="50" max="200" value="100" onchange="saveRadius()">
+            <label>Фокус:</label>
+            <input type="checkbox" id="focusToggle" checked onchange="saveFocusToggle()">
+            <label>Центр:</label>
+            <input type="checkbox" id="centerToggle" onchange="saveCenterToggle()">
+            <label>Попыток:</label>
+            <input type="number" id="maxAttemptsInput" min="0" max="100" value="20" onchange="saveMaxAttempts()">
             <label>Длина:</label>
             <input type="number" id="minLengthInput" min="50" max="500" value="100" onchange="saveLineLength()">
             <span>-</span>
@@ -187,6 +199,14 @@
         let currentRadius = 0;
         let targetRadius = 0;
         let currentMode = 'line';
+        let showFocusIndicator = true;
+        let centerOnly = false;
+        let drawingStartTime = 0;
+        let currentSpeed = 0;
+        let speedHistory = [];
+        let circleCenter = { x: 0, y: 0 };
+        let circleRadius = 0;
+        let maxAttempts = 20;
         
         // Chart.js graph
         let accuracyChart = null;
@@ -202,8 +222,9 @@
             const [x, y] = getEventPos(e);
             [lastX, lastY] = [x, y];
             
-            // Start new stroke
+            // Start new stroke and timing
             currentStroke = [{ x, y }];
+            drawingStartTime = Date.now();
         }
         
         function draw(e) {
@@ -236,38 +257,161 @@
             currentRadius = 0;
             targetRadius = 0;
             
+            if (currentMode === 'circle') {
+                generateCircle();
+            } else {
+                generateStraightLine();
+            }
+        }
+        
+        function generateCircle() {
+            // Clear previous target
+            targetLine = [];
+            
+            // Use line length as diameter
+            const diameter = minLineLength + Math.random() * (maxLineLength - minLineLength);
+            circleRadius = diameter / 2;
+            const padding = 50;
+            
+            if (centerOnly) {
+                // Generate circle at screen center
+                circleCenter.x = canvas.width / 2;
+                circleCenter.y = canvas.height / 2;
+                
+                // Ensure circle fits within bounds
+                const maxRadius = Math.min(
+                    Math.min(circleCenter.x - padding, canvas.width - circleCenter.x - padding),
+                    Math.min(circleCenter.y - padding, canvas.height - circleCenter.y - padding)
+                );
+                
+                if (circleRadius > maxRadius) {
+                    circleRadius = maxRadius;
+                }
+            } else {
+                // Random position ensuring circle fits
+                const minX = padding + circleRadius;
+                const maxX = canvas.width - padding - circleRadius;
+                const minY = padding + circleRadius;
+                const maxY = canvas.height - padding - circleRadius;
+                
+                if (maxX > minX && maxY > minY) {
+                    circleCenter.x = minX + Math.random() * (maxX - minX);
+                    circleCenter.y = minY + Math.random() * (maxY - minY);
+                } else {
+                    // Fallback to center if no space
+                    circleCenter.x = canvas.width / 2;
+                    circleCenter.y = canvas.height / 2;
+                    circleRadius = Math.min(canvas.width, canvas.height) / 4;
+                }
+            }
+            
+            // Generate points around the circle
+            const numPoints = Math.max(50, Math.ceil(circleRadius * 0.5));
+            for (let i = 0; i < numPoints; i++) {
+                const angle = (i / numPoints) * Math.PI * 2;
+                const x = circleCenter.x + Math.cos(angle) * circleRadius;
+                const y = circleCenter.y + Math.sin(angle) * circleRadius;
+                targetLine.push({ x, y });
+            }
+        }
+        
+        function generateStraightLine() {
+            // Clear previous target
+            targetLine = [];
+            
             // Generate random straight line with configured length
             const lineLength = minLineLength + Math.random() * (maxLineLength - minLineLength);
-            const angle = Math.random() * Math.PI * 2; // Random angle
-            
-            // Start position - ensure line fits on canvas with padding
             const padding = 50;
-            const maxX = canvas.width - padding;
-            const maxY = canvas.height - padding;
-            const minX = padding;
-            const minY = padding;
             
-            // Generate random start point within safe area
             let startX, startY, endX, endY;
-            let attempts = 0;
             
-            do {
-                startX = minX + Math.random() * (maxX - minX);
-                startY = minY + Math.random() * (maxY - minY);
-                endX = startX + Math.cos(angle) * lineLength;
-                endY = startY + Math.sin(angle) * lineLength;
+            if (centerOnly) {
+                // Generate line only from center with random angle and length
+                const angle = Math.random() * Math.PI * 2;
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
                 
-                // Try new angle if line goes out of bounds
-                if (endX < minX || endX > maxX || endY < minY || endY > maxY) {
-                    angle = Math.random() * Math.PI * 2;
+                const halfLength = lineLength / 2;
+                const dx = Math.cos(angle) * halfLength;
+                const dy = Math.sin(angle) * halfLength;
+                
+                startX = centerX - dx;
+                startY = centerY - dy;
+                endX = centerX + dx;
+                endY = centerY + dy;
+                
+                // Ensure line stays within bounds by reducing length if needed
+                const maxDistFromCenter = Math.min(
+                    Math.min(centerX - padding, canvas.width - centerX - padding),
+                    Math.min(centerY - padding, canvas.height - centerY - padding)
+                );
+                
+                if (halfLength > maxDistFromCenter) {
+                    const adjustedHalfLength = maxDistFromCenter;
+                    const adjustedDx = Math.cos(angle) * adjustedHalfLength;
+                    const adjustedDy = Math.sin(angle) * adjustedHalfLength;
+                    
+                    startX = centerX - adjustedDx;
+                    startY = centerY - adjustedDy;
+                    endX = centerX + adjustedDx;
+                    endY = centerY + adjustedDy;
                 }
-                attempts++;
-            } while ((endX < minX || endX > maxX || endY < minY || endY > maxY) && attempts < 50);
-            
-            // Fallback: ensure line stays within bounds
-            if (endX < minX || endX > maxX || endY < minY || endY > maxY) {
-                endX = Math.max(minX, Math.min(maxX, endX));
-                endY = Math.max(minY, Math.min(maxY, endY));
+            } else {
+                // Original random placement logic
+                const availableWidth = canvas.width - 2 * padding;
+                const availableHeight = canvas.height - 2 * padding;
+                
+                let attempts = 0;
+                let validLine = false;
+                
+                do {
+                    const angle = Math.random() * Math.PI * 2;
+                    
+                  const centerX = padding + availableWidth / 2 + (Math.random() - 0.5) * availableWidth * 0.;
+                    const centerY = padding + availableHeight / 2 + (Math.random() - 0.5) * availableHeight * 0.3;
+                    
+                    const halfLength = lineLength / 2;
+                    const dx = Math.cos(angle) * halfLength;
+                    const dy = Math.sin(angle) * halfLength;
+                    
+                    startX = centerX - dx;
+                    startY = centerY - dy;
+                    endX = centerX + dx;
+                    endY = centerY + dy;
+                    
+                    if (startX >= padding && startX <= canvas.width - padding &&
+                        startY >= padding && startY <= canvas.height - padding &&
+                        endX >= padding && endX <= canvas.width - padding &&
+                        endY >= padding && endY <= canvas.height - padding) {
+                        validLine = true;
+                    } else {
+                        const offsetX = (Math.random() - 0.5) * (availableWidth - Math.abs(dx * 2));
+                        const offsetY = (Math.random() - 0.5) * (availableHeight - Math.abs(dy * 2));
+                        
+                        startX = centerX - dx + offsetX;
+                        startY = centerY - dy + offsetY;
+                        endX = centerX + dx + offsetX;
+                        endY = centerY + dy + offsetY;
+                        
+                        if (startX >= padding && startX <= canvas.width - padding &&
+                            startY >= padding && startY <= canvas.height - padding &&
+                            endX >= padding && endX <= canvas.width - padding &&
+                            endY >= padding && endY <= canvas.height - padding) {
+                            validLine = true;
+                        }
+                    }
+                    
+                    attempts++;
+                } while (!validLine && attempts < 100);
+                
+                if (!validLine) {
+                    const centerY = canvas.height / 2;
+                    const maxLineLength = Math.min(lineLength, availableWidth);
+                    startX = padding + (availableWidth - maxLineLength) / 2;
+                    startY = centerY;
+                    endX = startX + maxLineLength;
+                    endY = centerY;
+                }
             }
             
             // Generate points along the straight line
@@ -282,9 +426,11 @@
             }
             
             currentAccuracy = 0;
+            currentSpeed = 0;
             updateAccuracyDisplay();
             updateAttemptsDisplay();
             updateLastResultsDisplay();
+            updateSpeedDisplay();
             clearGraph();
             redrawCanvas();
         }
@@ -329,6 +475,15 @@
                     ctx.textAlign = 'center';
                     ctx.fillText('S', startPoint.x, startPoint.y + 4);
                     ctx.fillText('E', endPoint.x, endPoint.y + 4);
+                } else if (currentMode === 'circle') {
+                    // Draw circle outline (gray, dashed)
+                    ctx.strokeStyle = '#888888';
+                    ctx.lineWidth = 3;
+                    ctx.setLineDash([10, 5]);
+                    ctx.beginPath();
+                    ctx.arc(circleCenter.x, circleCenter.y, circleRadius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
                 }
             }
             
@@ -347,7 +502,7 @@
             }
             
             // Draw floating accuracy indicator near cursor
-            if (isDrawing && currentMousePos.x > 0 && currentMousePos.y > 0) {
+            if (showFocusIndicator && currentMousePos.x > 0 && currentMousePos.y > 0) {
                 drawFloatingAccuracy();
             }
         }
@@ -463,6 +618,12 @@
         
         function stopDrawing() {
             if (isDrawing && currentStroke.length > 0) {
+                // Calculate drawing speed
+                const drawingTime = (Date.now() - drawingStartTime) / 1000; // seconds
+                const strokeLength = calculateStrokeLength(currentStroke);
+                currentSpeed = strokeLength / drawingTime; // pixels per second
+                speedHistory.push(currentSpeed);
+                
                 // Calculate final accuracy for this attempt
                 calculateAccuracy();
                 
@@ -471,18 +632,31 @@
                 currentAttempt++;
                 updateAttemptsDisplay();
                 updateLastResultsDisplay();
+                updateSpeedDisplay();
                 updateGraph();
                 
-                // Check if average accuracy of last 10 attempts is above threshold
+                // Check if should auto-change line
+                let shouldAutoChange = false;
+                
+                // Check accuracy threshold if we have enough attempts
                 if (attemptHistory.length >= 10) {
                     const last10 = attemptHistory.slice(-10);
                     const averageAccuracy = last10.reduce((sum, acc) => sum + acc, 0) / last10.length;
                     
                     if (averageAccuracy >= autoChangeThreshold) {
-                        setTimeout(() => {
-                            generateNewLine();
-                        }, 1000); // Delay to show the result
+                        shouldAutoChange = true;
                     }
+                }
+                
+                // Check max attempts limit (0 = infinite)
+                if (maxAttempts > 0 && currentAttempt > maxAttempts) {
+                    shouldAutoChange = true;
+                }
+                
+                if (shouldAutoChange) {
+                    setTimeout(() => {
+                        generateNewLine();
+                    }, 1000); // Delay to show the result
                 }
                 
                 // Clear all strokes after recording the result
@@ -493,6 +667,16 @@
                 redrawCanvas();
             }
             isDrawing = false;
+        }
+        
+        function calculateStrokeLength(stroke) {
+            let length = 0;
+            for (let i = 1; i < stroke.length; i++) {
+                const dx = stroke[i].x - stroke[i-1].x;
+                const dy = stroke[i].y - stroke[i-1].y;
+                length += Math.sqrt(dx * dx + dy * dy);
+            }
+            return length;
         }
         
         function getEventPos(e) {
@@ -508,7 +692,13 @@
         canvas.addEventListener('mousemove', (e) => {
             const [x, y] = getEventPos(e);
             currentMousePos = { x, y };
-            draw(e);
+            
+            // Always update focus indicator, but only draw if not drawing
+            if (!isDrawing && showFocusIndicator) {
+                redrawCanvas();
+            } else {
+                draw(e);
+            }
         });
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
@@ -560,7 +750,11 @@
         }, { passive: false });
         
         function updateAttemptsDisplay() {
-            document.getElementById('attempts').textContent = `Попытка: ${currentAttempt}`;
+            if (maxAttempts > 0) {
+                document.getElementById('attempts').textContent = `Попытка: ${currentAttempt}/${maxAttempts}`;
+            } else {
+                document.getElementById('attempts').textContent = `Попытка: ${currentAttempt}`;
+            }
         }
         
         function updateLastResultsDisplay() {
@@ -577,7 +771,18 @@
             // Calculate average success rate
             const averageAccuracy = last10.reduce((sum, acc) => sum + acc, 0) / last10.length;
             const successRate = Math.round(averageAccuracy);
-            document.getElementById('successRate').textContent = `Успех за 10: ${successRate}%`;
+            document.getElementById('successRate').textContent = `Успех: ${successRate}%`;
+        }
+        
+        function updateSpeedDisplay() {
+            const last10Speeds = speedHistory.slice(-10);
+            if (last10Speeds.length === 0) {
+                document.getElementById('speed').textContent = 'Скорость: 0 px/s';
+                return;
+            }
+            
+            const averageSpeed = last10Speeds.reduce((sum, speed) => sum + speed, 0) / last10Speeds.length;
+            document.getElementById('speed').textContent = `Скорость: ${Math.round(averageSpeed)} px/s`;
         }
         
         function getDistanceColor(distance) {
@@ -681,14 +886,25 @@
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Точность',
+                        label: 'Точность %',
                         data: [],
                         borderColor: '#007bff',
                         backgroundColor: 'rgba(0, 123, 255, 0.1)',
                         borderWidth: 2,
                         pointRadius: 2,
                         pointBackgroundColor: '#007bff',
-                        tension: 0.2
+                        tension: 0.2,
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Скорость px/s',
+                        data: [],
+                        borderColor: '#28a745',
+                        backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointBackgroundColor: '#28a745',
+                        tension: 0.2,
+                        yAxisID: 'y1'
                     }]
                 },
                 options: {
@@ -707,7 +923,9 @@
                             display: false
                         },
                         y: {
+                            type: 'linear',
                             display: true,
+                            position: 'left',
                             min: 0,
                             max: 100,
                             ticks: {
@@ -716,6 +934,16 @@
                             grid: {
                                 display: true,
                                 color: 'rgba(0,0,0,0.1)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: false,
+                            position: 'right',
+                            min: 0,
+                            max: 500,
+                            grid: {
+                                drawOnChartArea: false,
                             }
                         }
                     },
@@ -730,9 +958,12 @@
         function updateGraph() {
             if (!accuracyChart) return;
             
-            const last10 = attemptHistory.slice(-10);
-            accuracyChart.data.labels = last10.map((_, i) => i + 1);
-            accuracyChart.data.datasets[0].data = last10;
+            const last10Accuracy = attemptHistory.slice(-10);
+            const last10Speed = speedHistory.slice(-10);
+            
+            accuracyChart.data.labels = last10Accuracy.map((_, i) => i + 1);
+            accuracyChart.data.datasets[0].data = last10Accuracy;
+            accuracyChart.data.datasets[1].data = last10Speed;
             accuracyChart.update('none');
         }
         
@@ -740,6 +971,7 @@
             if (!accuracyChart) return;
             accuracyChart.data.labels = [];
             accuracyChart.data.datasets[0].data = [];
+            accuracyChart.data.datasets[1].data = [];
             accuracyChart.update('none');
         }
         
@@ -747,11 +979,14 @@
             userStrokes = [];
             currentStroke = [];
             attemptHistory = [];
+            speedHistory = [];
             currentAttempt = 1;
             currentAccuracy = 0;
+            currentSpeed = 0;
             updateAccuracyDisplay();
             updateAttemptsDisplay();
             updateLastResultsDisplay();
+            updateSpeedDisplay();
             clearGraph();
             redrawCanvas();
         }
@@ -793,6 +1028,28 @@
             redrawCanvas();
         }
         
+        function saveFocusToggle() {
+            const toggle = document.getElementById('focusToggle');
+            showFocusIndicator = toggle.checked;
+            localStorage.setItem('showFocusIndicator', showFocusIndicator);
+            
+            // Redraw canvas to apply change
+            redrawCanvas();
+        }
+        
+        function saveCenterToggle() {
+            const toggle = document.getElementById('centerToggle');
+            centerOnly = toggle.checked;
+            localStorage.setItem('centerOnly', centerOnly);
+        }
+        
+        function saveMaxAttempts() {
+            const input = document.getElementById('maxAttemptsInput');
+            maxAttempts = parseInt(input.value);
+            localStorage.setItem('maxAttempts', maxAttempts);
+            updateAttemptsDisplay();
+        }
+        
         function loadSettings() {
             const savedThreshold = localStorage.getItem('autoChangeThreshold');
             if (savedThreshold) {
@@ -822,6 +1079,24 @@
             if (savedMode) {
                 currentMode = savedMode;
                 document.getElementById('modeSelect').value = currentMode;
+            }
+            
+            const savedFocusToggle = localStorage.getItem('showFocusIndicator');
+            if (savedFocusToggle !== null) {
+                showFocusIndicator = savedFocusToggle === 'true';
+                document.getElementById('focusToggle').checked = showFocusIndicator;
+            }
+            
+            const savedCenterToggle = localStorage.getItem('centerOnly');
+            if (savedCenterToggle !== null) {
+                centerOnly = savedCenterToggle === 'true';
+                document.getElementById('centerToggle').checked = centerOnly;
+            }
+            
+            const savedMaxAttempts = localStorage.getItem('maxAttempts');
+            if (savedMaxAttempts !== null) {
+                maxAttempts = parseInt(savedMaxAttempts);
+                document.getElementById('maxAttemptsInput').value = maxAttempts;
             }
         }
         
